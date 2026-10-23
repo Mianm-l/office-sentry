@@ -44,7 +44,7 @@
 ### 1. 克隆代码与安装依赖
 
 ```bash
-git clone https://github.com/your-username/office-sentry.git
+git clone https://github.com/Mianm-l/office-sentry.git
 cd office-sentry
 
 # 安装轻量依赖
