@@ -15,6 +15,10 @@
 
 </div>
 
+<p align="center">
+  <img src="docs/images/preview.png" alt="OfficeSentry Architecture and Preview" width="95%">
+</p>
+
 ---
 
 ## 🌟 核心特性
