@@ -1,0 +1,98 @@
+{
+  "system": {
+    "scan_interval_seconds": 30,
+    "default_timeout_seconds": 5.0,
+    "fail_threshold": 2,
+    "cooldown_minutes": 15
+  },
+  "notifications": {
+    "desktop_toast": {
+      "enabled": true,
+      "description": "Windows 10/11 右下角原生系统 Toast 弹窗通知"
+    },
+    "wechat_work": {
+      "enabled": false,
+      "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_WECOM_BOT_KEY"
+    },
+    "feishu": {
+      "enabled": false,
+      "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_FEISHU_BOT_KEY"
+    },
+    "dingtalk": {
+      "enabled": false,
+      "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_DINGTALK_TOKEN",
+      "at_all": false
+    },
+    "wecom_app": {
+      "enabled": false,
+      "corpid": "YOUR_CORP_ID",
+      "agentid": "YOUR_AGENT_ID",
+      "token": "OfficeSentry",
+      "encoding_aes_key": "YOUR_43_CHARACTERS_ENCODING_AES_KEY"
+    }
+  },
+  "reminders": {
+    "enabled": true,
+    "workdays_only": true,
+    "worklog_reminder": {
+      "enabled": true,
+      "time": "17:50",
+      "message": "今日工作即将结束，请抽空填报工时与工作日志，避免遗漏哦！"
+    },
+    "health_break": {
+      "enabled": true,
+      "interval_minutes": 60,
+      "start_hour": 9,
+      "end_hour": 18,
+      "title": "💧 喝水与舒展提醒",
+      "message": "连续工作已有一段时间，站起来活动下肩颈、喝杯温水远眺一下吧！"
+    }
+  },
+  "targets": [
+    {
+      "id": "baidu_connectivity",
+      "name": "外网基础连通性 (Baidu)",
+      "type": "http",
+      "url": "https://www.baidu.com",
+      "method": "GET",
+      "expected_status": [
+        200
+      ],
+      "timeout": 4.0,
+      "enabled": true
+    },
+    {
+      "id": "github_zen",
+      "name": "GitHub API 健康心跳",
+      "type": "http",
+      "url": "https://api.github.com/zen",
+      "method": "GET",
+      "expected_status": [
+        200
+      ],
+      "timeout": 5.0,
+      "enabled": true
+    },
+    {
+      "id": "demo_local_service",
+      "name": "本地后端测试服务 (示例)",
+      "type": "http",
+      "url": "http://127.0.0.1:8080/health",
+      "method": "GET",
+      "expected_status": [
+        200
+      ],
+      "timeout": 3.0,
+      "enabled": false
+    },
+    {
+      "id": "demo_mysql_tcp",
+      "name": "本地 MySQL 数据库端口 (TCP 3306 示例)",
+      "type": "tcp",
+      "host": "127.0.0.1",
+      "port": 3306,
+      "timeout": 2.0,
+      "enabled": false
+    }
+  ]
+}
