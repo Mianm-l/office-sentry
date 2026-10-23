@@ -29,9 +29,105 @@ if CURRENT_DIR not in sys.path:
 
 from notify import NotificationHub
 from notify.wxcrypt import WXBizMsgCrypt
-from sentry import ProbeEngine, ChatOpsEngine
+from sentry import ProbeEngine, ChatOpsEngine, StateManager, ReminderScheduler
+import datetime
 
 logger = logging.getLogger("OfficeSentry.Server")
+
+# 全局常驻巡检状态跟踪
+patrol_state = {
+    "running": True,
+    "last_check_time": None,
+    "scan_interval_seconds": 30,
+    "fail_threshold": 2,
+    "results": {}
+}
+
+patrol_thread_started = False
+
+def start_background_patrol():
+    """在后台线程常驻执行巡检与提醒守护"""
+    global patrol_thread_started
+    if patrol_thread_started:
+        return
+    patrol_thread_started = True
+
+    def _patrol_loop():
+        logger.info("[+] OfficeSentry 后台常驻巡检守护引擎已启动！")
+        probe_engine = ProbeEngine()
+        state_mgr = StateManager()
+
+        while True:
+            try:
+                cfg = read_config()
+                sys_cfg = cfg.get("system", {})
+                interval = sys_cfg.get("scan_interval_seconds", 30)
+                fail_threshold = sys_cfg.get("fail_threshold", 2)
+                cooldown_minutes = sys_cfg.get("cooldown_minutes", 15)
+
+                state_mgr.fail_threshold = fail_threshold
+                state_mgr.cooldown_seconds = cooldown_minutes * 60
+
+                patrol_state["scan_interval_seconds"] = interval
+                patrol_state["fail_threshold"] = fail_threshold
+
+                notifier = NotificationHub(cfg)
+                reminder_mgr = ReminderScheduler(cfg, notifier)
+
+                targets = [t for t in cfg.get("targets", []) if t.get("enabled", True)]
+                now_str = datetime.datetime.now().strftime("%H:%M:%S")
+                patrol_state["last_check_time"] = now_str
+
+                for item in targets:
+                    res = probe_engine.probe(item)
+                    event, details = state_mgr.update(res)
+                    target_state = state_mgr.get_state(res.target_id)
+
+                    patrol_state["results"][res.target_id] = {
+                        "name": res.name,
+                        "success": res.success,
+                        "status_code": res.status_code,
+                        "latency_ms": res.latency_ms,
+                        "consecutive_fails": target_state.consecutive_failures,
+                        "is_alerting": target_state.is_alerting,
+                        "error_message": res.error_message
+                    }
+
+                    if event == "ALERT":
+                        logger.warning(f"[{now_str}] 触发故障告警: {res.name} (连续失败 {details['consecutive_fails']} 次)")
+                        notifier.send_alert(
+                            target_name=res.name,
+                            target_url=res.endpoint,
+                            error_msg=details['error_message'],
+                            consecutive_fails=details['consecutive_fails'],
+                            latency_ms=details['latency_ms']
+                        )
+                    elif event == "REPEAT_ALERT":
+                        logger.warning(f"[{now_str}] 持续故障续报: {res.name}")
+                        notifier.send_alert(
+                            target_name=res.name,
+                            target_url=res.endpoint,
+                            error_msg=details['error_message'],
+                            consecutive_fails=details['consecutive_fails'],
+                            latency_ms=details['latency_ms']
+                        )
+                    elif event == "RECOVERY":
+                        logger.info(f"[{now_str}] 故障已恢复: {res.name} (历时 {details['downtime_duration']})")
+                        notifier.send_recovery(
+                            target_name=res.name,
+                            target_url=res.endpoint,
+                            downtime_duration=details['downtime_duration'],
+                            latency_ms=details['latency_ms']
+                        )
+
+                reminder_mgr.tick()
+                time.sleep(interval)
+            except Exception as e:
+                logger.error(f"后台巡检线程异常: {e}")
+                time.sleep(5)
+
+    t = threading.Thread(target=_patrol_loop, daemon=True)
+    t.start()
 
 def get_config_path():
     """优先使用不受 git 追踪的本地私有配置 config.local.json"""
@@ -202,6 +298,15 @@ HTML_CONTENT = """<!DOCTYPE html>
     <!-- 选项卡 1: 监控目标清单 -->
     <div id="tab-targets" class="tab-pane">
       <div class="card">
+        <div id="patrolBanner" style="display:flex; justify-content:space-between; align-items:center; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 14px; margin-bottom:16px; font-size:13px; color:#166534;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#22c55e;"></span>
+            <span><b>后台哨兵巡检:</b> <span id="patrolStatusText">正在常驻守护巡检中...</span></span>
+          </div>
+          <div style="font-size:12px; color:#4b5563;" id="patrolSubText">
+            轮询: 30s | 报警阈值: 连续失败 2 次触发 (防抖抑制中)
+          </div>
+        </div>
         <div class="card-title">
           <span>监控的服务与接口</span>
           <button class="btn btn-primary btn-sm" onclick="openAddTargetModal()">➕ 添加新监控目标</button>
@@ -674,6 +779,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             <div class="target-title">
               <span>${t.name}</span>
               <span class="badge" style="background:#f1f5f9;color:#475569;">${(t.type || 'http').toUpperCase()}</span>
+              <span id="patrol_badge_${t.id}" class="probe-tag" style="display:none;"></span>
               <span id="probe_res_${idx}" class="probe-tag" style="display:none;"></span>
             </div>
             <div class="target-url">${endpoint}</div>
@@ -856,7 +962,10 @@ HTML_CONTENT = """<!DOCTYPE html>
           tag.innerText = `OK (${data.latency_ms.toFixed(0)}ms)`;
         } else {
           tag.className = "probe-tag probe-fail";
-          tag.innerText = `异常: ${data.error_message}`;
+          const safeName = (target.name || "").replace(/'/g, "\\'");
+          const safeUrl = (target.url || `${target.host}:${target.port}` || "").replace(/'/g, "\\'");
+          const safeErr = (data.error_message || "").replace(/'/g, "\\'");
+          tag.innerHTML = `异常: ${data.error_message} <button class="btn btn-danger btn-sm" style="padding:1px 6px;margin-left:6px;font-size:11px;" onclick="event.stopPropagation(); manualTriggerAlert('${safeName}', '${safeUrl}', '${safeErr}')">🔔 立即为此异常测试告警</button>`;
         }
       } catch (e) {
         if (tag) {
@@ -1033,8 +1142,59 @@ HTML_CONTENT = """<!DOCTYPE html>
       }
     }
 
-    // 页面初次加载时读取配置
-    loadConfig();
+    async function manualTriggerAlert(name, url, err) {
+      showToast("正在发送手动测试告警...");
+      try {
+        const res = await fetch("/api/trigger-alert", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name, url: url, error: err })
+        });
+        const d = await res.json();
+        if (d.ok) showToast("已触发系统 Toast 弹窗与群通知！");
+        else showToast("告警触发失败", true);
+      } catch (e) {
+        showToast("异常: " + e, true);
+      }
+    }
+
+    async function updatePatrolStatus() {
+      try {
+        const res = await fetch("/api/patrol-status");
+        const data = await res.json();
+        if (data.last_check_time) {
+          const statusText = document.getElementById("patrolStatusText");
+          const subText = document.getElementById("patrolSubText");
+          if (statusText) statusText.innerText = `正在常驻守护巡检中 (上次扫描: ${data.last_check_time})`;
+          if (subText) subText.innerText = `轮询: ${data.scan_interval_seconds}s | 连续失败 ${data.fail_threshold} 次报警 (防抖)`;
+        }
+        const results = data.results || {};
+        for (const [tid, r] of Object.entries(results)) {
+          const badge = document.getElementById("patrol_badge_" + tid);
+          if (badge) {
+            badge.style.display = "inline-block";
+            if (r.success) {
+              badge.className = "probe-tag probe-ok";
+              badge.innerText = `🟢 正常 (${r.latency_ms.toFixed(0)}ms)`;
+            } else if (r.is_alerting) {
+              badge.className = "probe-tag probe-fail";
+              badge.innerText = `🚨 持续告警中 (${r.status_code || '异常'} · 失败${r.consecutive_fails}次)`;
+            } else {
+              badge.className = "probe-tag";
+              badge.style.background = "#fef3c7";
+              badge.style.color = "#92400e";
+              badge.innerText = `🟡 失败${r.consecutive_fails}/${data.fail_threshold}次 (防抖抑制中)`;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 页面初次加载时读取配置并启动巡检状态轮询
+    loadConfig().then(() => {
+      updatePatrolStatus();
+      setInterval(updatePatrolStatus, 4000);
+    });
 
     // 支持 ESC 键关闭编辑弹窗
     document.addEventListener("keydown", (e) => {
@@ -1086,6 +1246,11 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
             self.wfile.write(json.dumps({"key": generate_aes_key()}).encode("utf-8"))
+        elif parsed.path == "/api/patrol-status":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(patrol_state, ensure_ascii=False).encode("utf-8"))
 
         # 企业微信自建应用 / 微信插件 URL 验证 (GET)
         elif parsed.path == "/webhook/wecom-app":
@@ -1313,6 +1478,18 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
 
+        elif parsed.path == "/api/trigger-alert":
+            name = req_data.get("name", "未命名服务")
+            url = req_data.get("url", "")
+            error_msg = req_data.get("error", "手动触发告警测试")
+            cfg = read_config()
+            hub = NotificationHub(cfg)
+            hub.send_alert(target_name=name, target_url=url, error_msg=error_msg, consecutive_fails=1)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+
         elif parsed.path == "/api/test-channel":
             channel = req_data.get("channel")
             cfg = req_data.get("config", read_config())
@@ -1404,6 +1581,9 @@ def run_server(port=9527, open_browser=True):
     print(f"   钉钉回调地址: {lan_url}/webhook/dingtalk")
     print(f"================================================================")
     
+    # 启动后台常驻巡检守护引擎（每隔 scan_interval_seconds 自动轮询所有目标并防抖告警）
+    start_background_patrol()
+
     if open_browser:
         webbrowser.open(local_url)
     

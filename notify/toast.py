@@ -6,10 +6,10 @@ import logging
 
 logger = logging.getLogger("OfficeSentry.Toast")
 
-def send_toast(title: str, message: str, app_id: str = "OfficeSentry") -> bool:
+def send_toast(title: str, message: str, app_id: str = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe") -> bool:
     """
     通过 Windows 10/11 原生 WinRT API 弹出系统级 Toast 桌面通知。
-    参数严格进行 PowerShell 单引号转义，杜绝任何命令注入风险。
+    默认采用 PowerShell 注册的系统级 AUMID，确保无需创建开始菜单快捷方式即可可靠弹出通知横幅。
     """
     clean_title = title.replace("'", "''").replace("\r", " ").replace("\n", " ")
     clean_message = message.replace("'", "''")
