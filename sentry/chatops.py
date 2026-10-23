@@ -168,7 +168,7 @@ class ChatOpsEngine:
             host = parts[0]
             port = int(parts[1]) if parts[1].isdigit() else 80
             new_target = {
-                "id": f"target_{int(os.times()[4] * 1000)}",
+                "id": f"target_{int(time.time() * 1000)}",
                 "name": name,
                 "type": "tcp",
                 "host": host,
@@ -180,7 +180,7 @@ class ChatOpsEngine:
             # HTTP/HTTPS
             url = endpoint if endpoint.startswith("http") else f"http://{endpoint}"
             new_target = {
-                "id": f"target_{int(os.times()[4] * 1000)}",
+                "id": f"target_{int(time.time() * 1000)}",
                 "name": name,
                 "type": "http",
                 "url": url,

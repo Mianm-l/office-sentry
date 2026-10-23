@@ -51,9 +51,10 @@ def read_config():
         return json.load(f)
 
 def write_config(data):
-    cfg_file = get_config_path()
+    cfg_file = os.path.join(CURRENT_DIR, "config.local.json")
     with open(cfg_file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    chatops_engine.config_path = cfg_file
 
 def get_local_ip():
     try:
@@ -141,9 +142,10 @@ HTML_CONTENT = """<!DOCTYPE html>
     input:checked + .slider:before { transform: translateX(20px); }
 
     /* Target items */
-    .target-item { border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; background: #fff; transition: border-color 0.2s; }
-    .target-item:hover { border-color: #94a3b8; }
-    .target-info { display: flex; flex-direction: column; gap: 4px; max-width: 65%; }
+    .target-item { border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; background: #fff; transition: border-color 0.2s, box-shadow 0.2s; }
+    .target-item:hover { border-color: #94a3b8; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+    .target-info { display: flex; flex-direction: column; gap: 4px; max-width: 65%; cursor: pointer; }
+    .target-info:hover .target-title span:first-child { color: var(--primary); text-decoration: underline; }
     .target-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
     .target-url { font-size: 12px; color: var(--text-muted); word-break: break-all; font-family: monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; display: inline-block; width: fit-content; }
     .target-actions { display: flex; align-items: center; gap: 8px; }
@@ -182,7 +184,8 @@ HTML_CONTENT = """<!DOCTYPE html>
         <h1>🛡️ OfficeSentry 办公哨兵</h1>
         <span class="badge">配置 & 机器人中心</span>
       </div>
-      <div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-secondary btn-sm" onclick="loadConfig(true)" title="从磁盘重新读取最新配置">🔄 重新加载</button>
         <button class="btn btn-secondary btn-sm" onclick="testNotification()">🔔 发送一次测试弹窗</button>
       </div>
     </div>
@@ -500,18 +503,18 @@ HTML_CONTENT = """<!DOCTYPE html>
 
   <!-- 底部吸底保存栏 -->
   <div class="footer-bar">
-    <div class="save-tips">修改后点击右侧按钮，配置立即自动保存并生效。</div>
+    <div class="save-tips">💡 支持点击各项直接【✏️ 编辑】；修改后点击右侧按钮立即全量保存并热加载生效。</div>
     <div style="display:flex; gap: 12px;">
       <button class="btn btn-secondary" onclick="runSingleCheckAll()">⚡ 立即全面测速</button>
-      <button class="btn btn-primary" onclick="saveConfiguration()">💾 保存所有配置</button>
+      <button class="btn btn-primary" onclick="saveConfiguration(false)">💾 保存所有配置</button>
     </div>
   </div>
 
   <!-- 添加/编辑监控目标弹窗 -->
-  <div id="targetModal" class="modal-overlay">
+  <div id="targetModal" class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal">
       <div class="modal-header">
-        <span id="modalTargetTitle">添加监控目标</span>
+        <span id="modalTargetTitle">➕ 添加新监控目标</span>
         <button style="border:none;background:none;cursor:pointer;font-size:18px;" onclick="closeModal()">✕</button>
       </div>
       <input type="hidden" id="modal_target_id">
@@ -555,13 +558,13 @@ HTML_CONTENT = """<!DOCTYPE html>
           <input type="number" id="modal_target_timeout" class="form-control" value="5.0" step="0.5">
         </div>
         <div class="form-group" id="wrap_http_status">
-          <label>期望正常状态码</label>
+          <label>期望正常状态码 (逗号分隔，如 200, 204, 302)</label>
           <input type="text" id="modal_target_status" class="form-control" value="200">
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal()">取消</button>
-        <button class="btn btn-primary" onclick="confirmSaveTarget()">确认添加</button>
+        <button class="btn btn-primary" id="btnModalConfirm" onclick="confirmSaveTarget()">确认添加</button>
       </div>
     </div>
   </div>
@@ -597,11 +600,14 @@ HTML_CONTENT = """<!DOCTYPE html>
       }
     }
 
-    async function loadConfig() {
+    async function loadConfig(showToastMsg = false) {
       try {
         const res = await fetch("/api/config");
         currentConfig = await res.json();
         renderForm();
+        if (showToastMsg) {
+          showToast("配置已成功重新载入！");
+        }
       } catch (e) {
         showToast("加载配置失败: " + e, true);
       }
@@ -662,18 +668,19 @@ HTML_CONTENT = """<!DOCTYPE html>
       targets.forEach((t, idx) => {
         const item = document.createElement("div");
         item.className = "target-item";
-        const endpoint = t.type === "tcp" ? `${t.host}:${t.port}` : t.url;
+        const endpoint = t.type === "tcp" ? `${t.host}:${t.port}` : (t.url || "");
         item.innerHTML = `
-          <div class="target-info">
+          <div class="target-info" onclick="openEditTargetModal(${idx})" title="点击直接编辑该目标">
             <div class="target-title">
               <span>${t.name}</span>
               <span class="badge" style="background:#f1f5f9;color:#475569;">${(t.type || 'http').toUpperCase()}</span>
-              <span id="probe_res_${t.id}" class="probe-tag" style="display:none;"></span>
+              <span id="probe_res_${idx}" class="probe-tag" style="display:none;"></span>
             </div>
             <div class="target-url">${endpoint}</div>
           </div>
           <div class="target-actions">
-            <button class="btn btn-secondary btn-sm" onclick="probeSingleTarget('${t.id}')">⚡ 测速</button>
+            <button class="btn btn-secondary btn-sm" onclick="probeSingleTarget(${idx})">⚡ 测速</button>
+            <button class="btn btn-secondary btn-sm" onclick="openEditTargetModal(${idx})">✏️ 编辑</button>
             <label class="switch" title="开启/停用该监控">
               <input type="checkbox" ${t.enabled !== false ? 'checked' : ''} onchange="toggleTargetStatus(${idx}, this.checked)">
               <span class="slider"></span>
@@ -685,14 +692,21 @@ HTML_CONTENT = """<!DOCTYPE html>
       });
     }
 
-    function toggleTargetStatus(idx, isChecked) {
+    async function toggleTargetStatus(idx, isChecked) {
+      if (!currentConfig.targets || !currentConfig.targets[idx]) return;
       currentConfig.targets[idx].enabled = isChecked;
+      await saveConfiguration(true);
+      showToast(isChecked ? `已开启【${currentConfig.targets[idx].name}】` : `已停用【${currentConfig.targets[idx].name}】`);
     }
 
-    function deleteTarget(idx) {
-      if (confirm("确定要删除这个监控目标吗？")) {
+    async function deleteTarget(idx) {
+      if (!currentConfig.targets || !currentConfig.targets[idx]) return;
+      const t = currentConfig.targets[idx];
+      if (confirm(`确定要删除监控目标【${t.name}】吗？`)) {
         currentConfig.targets.splice(idx, 1);
         renderTargetsList();
+        await saveConfiguration(true);
+        showToast(`已删除【${t.name}】！`);
       }
     }
 
@@ -711,8 +725,13 @@ HTML_CONTENT = """<!DOCTYPE html>
       }
     }
 
+    let editingTargetIndex = -1;
+
     function openAddTargetModal() {
-      document.getElementById("modalTargetTitle").innerText = "添加监控目标";
+      editingTargetIndex = -1;
+      document.getElementById("modalTargetTitle").innerText = "➕ 添加新监控目标";
+      document.getElementById("btnModalConfirm").innerText = "确认添加";
+      document.getElementById("modal_target_id").value = "";
       document.getElementById("modal_target_name").value = "";
       document.getElementById("modal_target_url").value = "";
       document.getElementById("modal_tcp_host").value = "127.0.0.1";
@@ -720,15 +739,41 @@ HTML_CONTENT = """<!DOCTYPE html>
       document.getElementById("modal_target_timeout").value = "5.0";
       document.getElementById("modal_target_status").value = "200";
       document.getElementById("modal_target_type").value = "http";
+      document.getElementById("modal_http_method").value = "GET";
       toggleTypeFields();
       document.getElementById("targetModal").style.display = "flex";
+      setTimeout(() => document.getElementById("modal_target_name").focus(), 50);
+    }
+
+    function openEditTargetModal(idx) {
+      editingTargetIndex = idx;
+      const t = currentConfig.targets[idx];
+      if (!t) return;
+      document.getElementById("modalTargetTitle").innerText = "✏️ 编辑监控目标";
+      document.getElementById("btnModalConfirm").innerText = "保存修改";
+      document.getElementById("modal_target_id").value = t.id || "";
+      document.getElementById("modal_target_name").value = t.name || "";
+      document.getElementById("modal_target_type").value = t.type || "http";
+      document.getElementById("modal_http_method").value = t.method || "GET";
+      document.getElementById("modal_target_url").value = t.url || "";
+      document.getElementById("modal_tcp_host").value = t.host || "127.0.0.1";
+      document.getElementById("modal_tcp_port").value = t.port || 3306;
+      document.getElementById("modal_target_timeout").value = (t.timeout !== undefined) ? t.timeout : 5.0;
+      
+      const statusList = t.expected_status ? (Array.isArray(t.expected_status) ? t.expected_status.join(", ") : t.expected_status) : "200";
+      document.getElementById("modal_target_status").value = statusList;
+
+      toggleTypeFields();
+      document.getElementById("targetModal").style.display = "flex";
+      setTimeout(() => document.getElementById("modal_target_name").focus(), 50);
     }
 
     function closeModal() {
       document.getElementById("targetModal").style.display = "none";
+      editingTargetIndex = -1;
     }
 
-    function confirmSaveTarget() {
+    async function confirmSaveTarget() {
       const name = document.getElementById("modal_target_name").value.trim();
       if (!name) {
         alert("请输入服务名称！");
@@ -737,44 +782,65 @@ HTML_CONTENT = """<!DOCTYPE html>
       const type = document.getElementById("modal_target_type").value;
       const timeout = parseFloat(document.getElementById("modal_target_timeout").value) || 5.0;
 
-      const newTarget = {
-        id: "target_" + Date.now(),
-        name: name,
-        type: type,
-        timeout: timeout,
-        enabled: true
-      };
+      let targetData = {};
+      if (editingTargetIndex >= 0 && currentConfig.targets && currentConfig.targets[editingTargetIndex]) {
+        targetData = Object.assign({}, currentConfig.targets[editingTargetIndex]);
+      } else {
+        targetData = {
+          id: "target_" + Date.now(),
+          enabled: true
+        };
+      }
+
+      targetData.name = name;
+      targetData.type = type;
+      targetData.timeout = timeout;
 
       if (type === "tcp") {
-        newTarget.host = document.getElementById("modal_tcp_host").value.trim() || "127.0.0.1";
-        newTarget.port = parseInt(document.getElementById("modal_tcp_port").value) || 80;
+        targetData.host = document.getElementById("modal_tcp_host").value.trim() || "127.0.0.1";
+        targetData.port = parseInt(document.getElementById("modal_tcp_port").value) || 80;
+        delete targetData.url;
+        delete targetData.method;
+        delete targetData.expected_status;
       } else {
         const url = document.getElementById("modal_target_url").value.trim();
         if (!url) {
           alert("请输入 URL 地址！");
           return;
         }
-        newTarget.url = url;
-        newTarget.method = document.getElementById("modal_http_method").value;
-        const statusList = document.getElementById("modal_target_status").value.split(",").map(s => parseInt(s.trim())).filter(s => !isNaN(s));
-        newTarget.expected_status = statusList.length ? statusList : [200];
+        targetData.url = url;
+        targetData.method = document.getElementById("modal_http_method").value;
+        const statusList = document.getElementById("modal_target_status").value
+          .split(",")
+          .map(s => parseInt(s.trim()))
+          .filter(s => !isNaN(s));
+        targetData.expected_status = statusList.length ? statusList : [200];
+        delete targetData.host;
+        delete targetData.port;
       }
 
       currentConfig.targets = currentConfig.targets || [];
-      currentConfig.targets.push(newTarget);
+      if (editingTargetIndex >= 0) {
+        currentConfig.targets[editingTargetIndex] = targetData;
+      } else {
+        currentConfig.targets.push(targetData);
+      }
+
       renderTargetsList();
       closeModal();
-      showToast("监控项已添加！记得点击底部「保存所有配置」");
+
+      await saveConfiguration(true);
+      showToast(editingTargetIndex >= 0 ? "🎉 监控目标已更新并保存！" : "🎉 监控目标已添加并保存！");
     }
 
-    async function probeSingleTarget(targetId) {
-      const target = currentConfig.targets.find(t => t.id === targetId);
+    async function probeSingleTarget(idx) {
+      const target = (currentConfig.targets || [])[idx];
       if (!target) return;
-      const tag = document.getElementById("probe_res_" + targetId);
+      const tag = document.getElementById("probe_res_" + idx);
       if (tag) {
         tag.style.display = "inline-block";
         tag.className = "probe-tag";
-        tag.innerText = "探测中...";
+        tag.innerText = "测速中...";
         tag.style.background = "#e2e8f0";
         tag.style.color = "#475569";
       }
@@ -802,8 +868,9 @@ HTML_CONTENT = """<!DOCTYPE html>
 
     async function runSingleCheckAll() {
       showToast("正在逐个测试所有监控目标...");
-      for (const t of currentConfig.targets) {
-        await probeSingleTarget(t.id);
+      const targets = currentConfig.targets || [];
+      for (let i = 0; i < targets.length; i++) {
+        await probeSingleTarget(i);
       }
       showToast("所有目标测速完成！");
     }
@@ -878,45 +945,63 @@ HTML_CONTENT = """<!DOCTYPE html>
 
     function collectFormData() {
       currentConfig.notifications = currentConfig.notifications || {};
-      currentConfig.notifications.desktop_toast = {
-        enabled: document.getElementById("desktop_toast_enabled").checked
-      };
-      currentConfig.notifications.wechat_work = {
-        enabled: document.getElementById("wechat_enabled").checked,
-        webhook_url: document.getElementById("wechat_webhook").value.trim()
-      };
-      currentConfig.notifications.feishu = {
-        enabled: document.getElementById("feishu_enabled").checked,
-        webhook_url: document.getElementById("feishu_webhook").value.trim()
-      };
-      currentConfig.notifications.dingtalk = {
-        enabled: document.getElementById("dingtalk_enabled").checked,
-        webhook_url: document.getElementById("dingtalk_webhook").value.trim(),
-        at_all: false
-      };
-
-      currentConfig.notifications.wecom_app = {
-        enabled: document.getElementById("wecom_app_enabled").checked,
-        corpid: document.getElementById("wecom_corpid").value.trim(),
-        agentid: document.getElementById("wecom_agentid").value.trim(),
-        token: document.getElementById("wecom_token").value.trim() || "OfficeSentry",
-        encoding_aes_key: document.getElementById("wecom_aes_key").value.trim()
-      };
+      currentConfig.notifications.desktop_toast = Object.assign(
+        currentConfig.notifications.desktop_toast || {},
+        { enabled: document.getElementById("desktop_toast_enabled").checked }
+      );
+      currentConfig.notifications.wechat_work = Object.assign(
+        currentConfig.notifications.wechat_work || {},
+        {
+          enabled: document.getElementById("wechat_enabled").checked,
+          webhook_url: document.getElementById("wechat_webhook").value.trim()
+        }
+      );
+      currentConfig.notifications.feishu = Object.assign(
+        currentConfig.notifications.feishu || {},
+        {
+          enabled: document.getElementById("feishu_enabled").checked,
+          webhook_url: document.getElementById("feishu_webhook").value.trim()
+        }
+      );
+      currentConfig.notifications.dingtalk = Object.assign(
+        currentConfig.notifications.dingtalk || {},
+        {
+          enabled: document.getElementById("dingtalk_enabled").checked,
+          webhook_url: document.getElementById("dingtalk_webhook").value.trim(),
+          at_all: false
+        }
+      );
+      currentConfig.notifications.wecom_app = Object.assign(
+        currentConfig.notifications.wecom_app || {},
+        {
+          enabled: document.getElementById("wecom_app_enabled").checked,
+          corpid: document.getElementById("wecom_corpid").value.trim(),
+          agentid: document.getElementById("wecom_agentid").value.trim(),
+          token: document.getElementById("wecom_token").value.trim() || "OfficeSentry",
+          encoding_aes_key: document.getElementById("wecom_aes_key").value.trim()
+        }
+      );
 
       currentConfig.reminders = currentConfig.reminders || {};
-      currentConfig.reminders.worklog_reminder = {
-        enabled: document.getElementById("worklog_enabled").checked,
-        time: document.getElementById("worklog_time").value,
-        message: document.getElementById("worklog_msg").value
-      };
-      currentConfig.reminders.health_break = {
-        enabled: document.getElementById("health_enabled").checked,
-        interval_minutes: parseInt(document.getElementById("health_interval").value) || 60,
-        start_hour: parseInt(document.getElementById("health_start").value) || 9,
-        end_hour: parseInt(document.getElementById("health_end").value) || 18,
-        title: "💧 喝水与舒展提醒",
-        message: "连续工作已有一段时间，站起来活动下肩颈、喝杯温水远眺一下吧！"
-      };
+      currentConfig.reminders.worklog_reminder = Object.assign(
+        currentConfig.reminders.worklog_reminder || {},
+        {
+          enabled: document.getElementById("worklog_enabled").checked,
+          time: document.getElementById("worklog_time").value,
+          message: document.getElementById("worklog_msg").value
+        }
+      );
+      currentConfig.reminders.health_break = Object.assign(
+        currentConfig.reminders.health_break || {},
+        {
+          enabled: document.getElementById("health_enabled").checked,
+          interval_minutes: parseInt(document.getElementById("health_interval").value) || 60,
+          start_hour: parseInt(document.getElementById("health_start").value) || 9,
+          end_hour: parseInt(document.getElementById("health_end").value) || 18,
+          title: "💧 喝水与舒展提醒",
+          message: "连续工作已有一段时间，站起来活动下肩颈、喝杯温水远眺一下吧！"
+        }
+      );
 
       currentConfig.system = currentConfig.system || {};
       currentConfig.system.scan_interval_seconds = parseInt(document.getElementById("sys_scan_interval").value) || 30;
@@ -924,7 +1009,7 @@ HTML_CONTENT = """<!DOCTYPE html>
       currentConfig.system.cooldown_minutes = parseInt(document.getElementById("sys_cooldown").value) || 15;
     }
 
-    async function saveConfiguration() {
+    async function saveConfiguration(silent = false) {
       collectFormData();
       try {
         const res = await fetch("/api/config", {
@@ -934,19 +1019,26 @@ HTML_CONTENT = """<!DOCTYPE html>
         });
         const d = await res.json();
         if (d.ok) {
-          showToast("🎉 配置已全部成功保存！");
+          if (!silent) {
+            showToast("🎉 配置已全部成功保存并立即生效！");
+          }
+          return true;
         } else {
           showToast("保存失败: " + d.error, true);
+          return false;
         }
       } catch (e) {
         showToast("保存异常: " + e, true);
+        return false;
       }
     }
 
+    // 页面初次加载时读取配置
     loadConfig();
-    window.addEventListener('focus', loadConfig);
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) loadConfig();
+
+    // 支持 ESC 键关闭编辑弹窗
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeModal();
     });
   </script>
 </body>
@@ -960,7 +1052,7 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
     def is_local_client(self) -> bool:
         """安全鉴权：判断请求是否来自于本机"""
         client_ip = self.client_address[0]
-        return client_ip in ("127.0.0.1", "::1", "localhost")
+        return client_ip in ("127.0.0.1", "::1", "localhost", get_local_ip())
 
     def do_GET(self):
         parsed = urlparse(self.path)
