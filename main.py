@@ -163,7 +163,11 @@ def main():
         return
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    config_file = args.config if os.path.isabs(args.config) else os.path.join(base_dir, args.config)
+    if args.config != "config.json":
+        config_file = args.config if os.path.isabs(args.config) else os.path.join(base_dir, args.config)
+    else:
+        local_cfg = os.path.join(base_dir, "config.local.json")
+        config_file = local_cfg if os.path.exists(local_cfg) else os.path.join(base_dir, "config.json")
 
     config = load_config(config_file)
     print_banner()

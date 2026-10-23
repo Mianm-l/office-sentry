@@ -32,17 +32,27 @@ from notify.wxcrypt import WXBizMsgCrypt
 from sentry import ProbeEngine, ChatOpsEngine
 
 logger = logging.getLogger("OfficeSentry.Server")
-CONFIG_PATH = os.path.join(CURRENT_DIR, "config.json")
+
+def get_config_path():
+    """优先使用不受 git 追踪的本地私有配置 config.local.json"""
+    local_cfg = os.path.join(CURRENT_DIR, "config.local.json")
+    if os.path.exists(local_cfg):
+        return local_cfg
+    return os.path.join(CURRENT_DIR, "config.json")
+
+CONFIG_PATH = get_config_path()
 chatops_engine = ChatOpsEngine(CONFIG_PATH)
 
 def read_config():
-    if not os.path.exists(CONFIG_PATH):
+    cfg_file = get_config_path()
+    if not os.path.exists(cfg_file):
         return {}
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    with open(cfg_file, "r", encoding="utf-8") as f:
         return json.load(f)
 
 def write_config(data):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+    cfg_file = get_config_path()
+    with open(cfg_file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def get_local_ip():
@@ -934,6 +944,10 @@ HTML_CONTENT = """<!DOCTYPE html>
     }
 
     loadConfig();
+    window.addEventListener('focus', loadConfig);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) loadConfig();
+    });
   </script>
 </body>
 </html>
