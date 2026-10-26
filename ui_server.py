@@ -78,6 +78,10 @@ def start_background_patrol():
                 now_str = datetime.datetime.now().strftime("%H:%M:%S")
                 patrol_state["last_check_time"] = now_str
 
+                alerts_new = []
+                alerts_repeat = []
+                recoveries = []
+
                 for item in targets:
                     res = probe_engine.probe(item)
                     event, details = state_mgr.update(res)
@@ -95,30 +99,38 @@ def start_background_patrol():
 
                     if event == "ALERT":
                         logger.warning(f"[{now_str}] 触发故障告警: {res.name} (连续失败 {details['consecutive_fails']} 次)")
-                        notifier.send_alert(
-                            target_name=res.name,
-                            target_url=res.endpoint,
-                            error_msg=details['error_message'],
-                            consecutive_fails=details['consecutive_fails'],
-                            latency_ms=details['latency_ms']
-                        )
+                        alerts_new.append({
+                            "target_name": res.name,
+                            "target_url": res.endpoint,
+                            "error_msg": details['error_message'],
+                            "consecutive_fails": details['consecutive_fails'],
+                            "latency_ms": details['latency_ms']
+                        })
                     elif event == "REPEAT_ALERT":
                         logger.warning(f"[{now_str}] 持续故障续报: {res.name}")
-                        notifier.send_alert(
-                            target_name=res.name,
-                            target_url=res.endpoint,
-                            error_msg=details['error_message'],
-                            consecutive_fails=details['consecutive_fails'],
-                            latency_ms=details['latency_ms']
-                        )
+                        alerts_repeat.append({
+                            "target_name": res.name,
+                            "target_url": res.endpoint,
+                            "error_msg": details['error_message'],
+                            "consecutive_fails": details['consecutive_fails'],
+                            "latency_ms": details['latency_ms']
+                        })
                     elif event == "RECOVERY":
                         logger.info(f"[{now_str}] 故障已恢复: {res.name} (历时 {details['downtime_duration']})")
-                        notifier.send_recovery(
-                            target_name=res.name,
-                            target_url=res.endpoint,
-                            downtime_duration=details['downtime_duration'],
-                            latency_ms=details['latency_ms']
-                        )
+                        recoveries.append({
+                            "target_name": res.name,
+                            "target_url": res.endpoint,
+                            "downtime_duration": details['downtime_duration'],
+                            "latency_ms": details['latency_ms']
+                        })
+
+                # 单轮巡检统一聚合派发，掉线服务合并成一条消息推送！
+                if alerts_new:
+                    notifier.send_batch_alert(alerts_new, is_repeat=False)
+                if alerts_repeat:
+                    notifier.send_batch_alert(alerts_repeat, is_repeat=True)
+                if recoveries:
+                    notifier.send_batch_recovery(recoveries)
 
                 reminder_mgr.tick()
                 time.sleep(interval)

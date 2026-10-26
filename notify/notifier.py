@@ -22,6 +22,171 @@ class NotificationHub:
         self.feishu_cfg = self.config.get("feishu", {})
         self.dingtalk_cfg = self.config.get("dingtalk", {})
 
+    def send_batch_alert(self, alerts: list, is_repeat: bool = False):
+        """
+        合并派发批量服务故障告警（桌面 Toast + Webhook 机器人）
+        单轮巡检窗口内多服务掉线时合并为一条推送，杜绝弹窗被 Windows 系统抑制或群聊被多条连续刷屏。
+        """
+        if not alerts:
+            return
+        if len(alerts) == 1:
+            a = alerts[0]
+            self.send_alert(
+                target_name=a["target_name"],
+                target_url=a["target_url"],
+                error_msg=a["error_msg"],
+                consecutive_fails=a["consecutive_fails"],
+                latency_ms=a.get("latency_ms", 0)
+            )
+            return
+
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        count = len(alerts)
+        action_name = "持续故障续报" if is_repeat else "服务异常告警"
+        title = f"⚠️ [{action_name}] 检测到 {count} 个服务异常"
+
+        # 1. 本地 Windows 桌面通知 (单条聚合弹窗，确保不被系统抑制)
+        if self.toast_enabled:
+            toast_items = []
+            for a in alerts[:4]:
+                toast_items.append(f"• {a['target_name']}: {a['error_msg']}")
+            if count > 4:
+                toast_items.append(f"...等共 {count} 个服务故障")
+            short_msg = "\n".join(toast_items)
+            send_toast(title=title, message=short_msg)
+
+        # 2. 企微 Markdown
+        if self.wechat_cfg.get("enabled"):
+            lines = [
+                f"### <font color=\"warning\">⚠️ {action_name}：共 {count} 个服务异常</font>\n"
+            ]
+            for a in alerts:
+                lines.append(
+                    f"> **{a['target_name']}** (`{a['target_url']}`)\n"
+                    f"> • 失败次数: 连续 {a['consecutive_fails']} 次 | 响应耗时: {a.get('latency_ms', 0):.1f}ms\n"
+                    f"> • 异常详情: <font color=\"warning\">{a['error_msg']}</font>\n"
+                )
+            lines.append(f"\n> 告警时间: {now_str}\n\n请相关研发/运维人员及时排查！")
+            send_wechat_markdown(self.wechat_cfg.get("webhook_url", ""), "\n".join(lines))
+
+        # 3. 飞书卡片
+        if self.feishu_cfg.get("enabled"):
+            lines = [
+                f"**本次巡检发现 {count} 个监控目标处于异常状态：**\n"
+            ]
+            for a in alerts:
+                lines.append(
+                    f"• **{a['target_name']}** (`{a['target_url']}`)\n"
+                    f"  异常: {a['error_msg']} (连续失败 {a['consecutive_fails']} 次, 耗时 {a.get('latency_ms', 0):.1f}ms)"
+                )
+            lines.append(f"\n**发生时间**: {now_str}")
+            send_feishu_card(
+                self.feishu_cfg.get("webhook_url", ""),
+                title=f"⚠️ {action_name} ({count} 个服务故障)",
+                content="\n".join(lines),
+                level="error"
+            )
+
+        # 4. 钉钉 Markdown
+        if self.dingtalk_cfg.get("enabled"):
+            lines = [
+                f"### ⚠️ {action_name}：共 {count} 个服务异常\n"
+            ]
+            for a in alerts:
+                lines.append(
+                    f"- **{a['target_name']}** (`{a['target_url']}`)\n"
+                    f"  - 失败次数: 连续 {a['consecutive_fails']} 次 | 耗时: {a.get('latency_ms', 0):.1f}ms\n"
+                    f"  - 异常详情: {a['error_msg']}\n"
+                )
+            lines.append(f"- **告警时间**: {now_str}\n")
+            send_dingtalk_markdown(
+                self.dingtalk_cfg.get("webhook_url", ""),
+                title=title,
+                text="\n".join(lines),
+                at_all=self.dingtalk_cfg.get("at_all", False)
+            )
+
+    def send_batch_recovery(self, recoveries: list):
+        """
+        合并派发批量服务恢复通告（桌面 Toast + Webhook 机器人）
+        """
+        if not recoveries:
+            return
+        if len(recoveries) == 1:
+            r = recoveries[0]
+            self.send_recovery(
+                target_name=r["target_name"],
+                target_url=r["target_url"],
+                downtime_duration=r["downtime_duration"],
+                latency_ms=r.get("latency_ms", 0)
+            )
+            return
+
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        count = len(recoveries)
+        title = f"✅ [服务恢复] {count} 个服务已恢复正常"
+
+        # 1. 桌面通知
+        if self.toast_enabled:
+            toast_items = []
+            for r in recoveries[:4]:
+                toast_items.append(f"• {r['target_name']}: 历时 {r['downtime_duration']}")
+            if count > 4:
+                toast_items.append(f"...等共 {count} 个服务已恢复")
+            short_msg = "\n".join(toast_items)
+            send_toast(title=title, message=short_msg)
+
+        # 2. 企微 Markdown
+        if self.wechat_cfg.get("enabled"):
+            lines = [
+                f"### <font color=\"info\">✅ 服务恢复通告：共 {count} 个服务已恢复</font>\n"
+            ]
+            for r in recoveries:
+                lines.append(
+                    f"> **{r['target_name']}** (`{r['target_url']}`)\n"
+                    f"> • 状态: <font color=\"info\">恢复正常 (200 OK)</font>\n"
+                    f"> • 响应耗时: {r.get('latency_ms', 0):.1f}ms | 故障历时: {r['downtime_duration']}\n"
+                )
+            lines.append(f"\n> 恢复时间: {now_str}")
+            send_wechat_markdown(self.wechat_cfg.get("webhook_url", ""), "\n".join(lines))
+
+        # 3. 飞书卡片
+        if self.feishu_cfg.get("enabled"):
+            lines = [
+                f"**本次巡检确认 {count} 个服务已脱离故障恢复正常：**\n"
+            ]
+            for r in recoveries:
+                lines.append(
+                    f"• **{r['target_name']}** (`{r['target_url']}`)\n"
+                    f"  当前耗时: {r.get('latency_ms', 0):.1f}ms | 故障历时: {r['downtime_duration']}"
+                )
+            lines.append(f"\n**恢复时间**: {now_str}")
+            send_feishu_card(
+                self.feishu_cfg.get("webhook_url", ""),
+                title=f"✅ 服务批量恢复 ({count} 个服务已恢复)",
+                content="\n".join(lines),
+                level="success"
+            )
+
+        # 4. 钉钉 Markdown
+        if self.dingtalk_cfg.get("enabled"):
+            lines = [
+                f"### ✅ 服务恢复通告：共 {count} 个服务已恢复\n"
+            ]
+            for r in recoveries:
+                lines.append(
+                    f"- **{r['target_name']}** (`{r['target_url']}`)\n"
+                    f"  - 状态: 恢复正常 ({r.get('latency_ms', 0):.1f}ms)\n"
+                    f"  - 故障历时: {r['downtime_duration']}\n"
+                )
+            lines.append(f"- **恢复时间**: {now_str}\n")
+            send_dingtalk_markdown(
+                self.dingtalk_cfg.get("webhook_url", ""),
+                title=title,
+                text="\n".join(lines),
+                at_all=False
+            )
+
     def send_alert(self, target_name: str, target_url: str, error_msg: str, consecutive_fails: int, latency_ms: float = 0):
         """
         触发服务异常报警（桌面 Toast + Webhook 机器人）
