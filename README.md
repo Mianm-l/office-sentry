@@ -4,7 +4,11 @@
 </p>
 
 <p align="center">
-  [![Language](https://img.shields.io/badge/Language-Python-3776AB?style=flat-square)](#) [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](#) [![Pure Local](https://img.shields.io/badge/Privacy-100%25_Local-10B981?style=flat-square)](#) [![Zero Config](https://img.shields.io/badge/Setup-Zero_Config-8B5CF6?style=flat-square)](#) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](#)
+  <img src="https://img.shields.io/badge/Language-Python-3776AB?style=flat-square" alt="Language" />
+  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/badge/Privacy-100%25_Local-10B981?style=flat-square" alt="Pure Local" />
+  <img src="https://img.shields.io/badge/Setup-Zero_Config-8B5CF6?style=flat-square" alt="Zero Config" />
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" />
 </p>
 
 <p align="center">
