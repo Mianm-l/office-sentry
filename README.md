@@ -1,22 +1,6 @@
-<!-- REPO_CRAFT_BANNER_BEGIN -->
 <p align="center">
   <img src="assets/hero-banner.png" alt="OfficeSentry Banner" width="100%" />
 </p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Language-Python-3776AB?style=flat-square" alt="Language" />
-  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License" />
-  <img src="https://img.shields.io/badge/Privacy-100%25_Local-10B981?style=flat-square" alt="Pure Local" />
-  <img src="https://img.shields.io/badge/Setup-Zero_Config-8B5CF6?style=flat-square" alt="Zero Config" />
-  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" />
-</p>
-
-<p align="center">
-  <strong>轻量级自动化接口巡检与故障自愈哨兵，支持桌面弹窗与微信 ChatOps 交互</strong>
-</p>
-<!-- REPO_CRAFT_BANNER_END -->
-
-# 🛡️ OfficeSentry 办公协同哨兵
 
 <div align="center">
 
